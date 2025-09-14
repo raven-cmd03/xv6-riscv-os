@@ -19,7 +19,7 @@ void print_matrix(int matrix[MATRIX_SIZE][MATRIX_SIZE], const char* name) {
     printf("%s:\n", name);
     for (int i = 0; i < MATRIX_SIZE; i++) {
         for (int j = 0; j < MATRIX_SIZE; j++) {
-            printf("%4d ", matrix[i][j]);
+            printf("%d ", matrix[i][j]);
         }
         printf("\n");
     }
