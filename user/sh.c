@@ -12,6 +12,8 @@
 #define BACK  5
 
 #define MAXARGS 10
+#define MAX_HISTORY 20
+#define MAX_LINE_LENGTH 200
 
 struct cmd {
   int type;
@@ -49,10 +51,30 @@ struct backcmd {
   struct cmd *cmd;
 };
 
+// Command history structure
+struct history_entry {
+  char command[MAX_LINE_LENGTH];
+  int length;
+};
+
+// Global history variables
+static struct history_entry history[MAX_HISTORY];
+static int history_count = 0;
+static int history_index = -1;  // -1 means no history selected
+static int history_start = 0;   // For circular buffer
+
 int fork1(void);  // Fork but panics on failure.
 void panic(char*);
 struct cmd *parsecmd(char*);
 void runcmd(struct cmd*) __attribute__((noreturn));
+
+// History management functions
+void add_to_history(char *cmd);
+void display_history(void);
+char* get_history_command(int direction);
+int atoi_simple(char *str);
+int strncmp_simple(char *s1, char *s2, int n);
+int getchar_simple(void);
 
 // Execute cmd.  Never returns.
 void
@@ -136,7 +158,81 @@ getcmd(char *buf, int nbuf)
 {
   write(2, "$ ", 2);
   memset(buf, 0, nbuf);
-  gets(buf, nbuf);
+  
+  int pos = 0;
+  int c;
+  
+  while(1) {
+    c = getchar_simple();
+    if(c == '\n' || c == '\r') {
+      buf[pos] = '\n';
+      buf[pos + 1] = 0;
+      break;
+    } else if(c == 4) { // Ctrl+D (EOF)
+      if(pos == 0) {
+        return -1;
+      }
+    } else if(c == 127 || c == '\b') { // Backspace
+      if(pos > 0) {
+        pos--;
+        write(2, "\b \b", 3); // Move back, space, move back
+      }
+    } else if(c == 27) { // Escape sequence (arrow keys)
+      // Read the next two characters to determine which arrow key
+      int c2 = getchar_simple();
+      int c3 = getchar_simple();
+      
+      if(c2 == '[') {
+        if(c3 == 'A') { // Up arrow - show history command
+          char *hist_cmd = get_history_command(1);
+          if(hist_cmd) {
+            // Show the command on a new line for clarity
+            printf("\nPrevious command: %s", hist_cmd);
+            write(2, "$ ", 2);
+            
+            // Copy history command to buffer
+            int len = strlen(hist_cmd);
+            if(len > 0 && hist_cmd[len-1] == '\n') {
+              strcpy(buf, hist_cmd);
+              pos = len-1;
+            } else {
+              strcpy(buf, hist_cmd);
+              pos = len;
+            }
+            write(2, buf, pos);
+          }
+        } else if(c3 == 'B') { // Down arrow - show next history command
+          char *hist_cmd = get_history_command(-1);
+          if(hist_cmd) {
+            printf("\nNext command: %s", hist_cmd);
+            write(2, "$ ", 2);
+            
+            // Copy history command to buffer
+            int len = strlen(hist_cmd);
+            if(len > 0 && hist_cmd[len-1] == '\n') {
+              strcpy(buf, hist_cmd);
+              pos = len-1;
+            } else {
+              strcpy(buf, hist_cmd);
+              pos = len;
+            }
+            write(2, buf, pos);
+          } else {
+            // Clear current line completely
+            printf("\nNo more history\n");
+            write(2, "$ ", 2);
+            memset(buf, 0, nbuf);
+            pos = 0;
+          }
+        }
+      }
+    } else if(pos < nbuf - 1) {
+      buf[pos] = c;
+      pos++;
+      write(2, &c, 1);
+    }
+  }
+  
   if(buf[0] == 0) // EOF
     return -1;
   return 0;
@@ -163,6 +259,40 @@ main(void)
       cmd++;
     if (*cmd == '\n') // is a blank command
       continue;
+      
+    // Handle built-in history commands
+    if(strcmp(cmd, "history\n") == 0 || strcmp(cmd, "hist\n") == 0) {
+      display_history();
+      continue;
+    }
+    
+    // Handle history selection (e.g., "!1", "!2", etc.)
+    if(cmd[0] == '!' && cmd[1] >= '1' && cmd[1] <= '9') {
+      int hist_num = cmd[1] - '0';
+      if(hist_num <= history_count) {
+        int index = (history_start + hist_num - 1) % MAX_HISTORY;
+        char *selected_cmd = history[index].command;
+        printf("Executing: %s", selected_cmd);
+        
+        // Process the selected command
+        if(selected_cmd[0] == 'c' && selected_cmd[1] == 'd' && selected_cmd[2] == ' ') {
+          selected_cmd[strlen(selected_cmd)-1] = 0;  // chop \n
+          if(chdir(selected_cmd+3) < 0)
+            fprintf(2, "cannot cd %s\n", selected_cmd+3);
+        } else {
+          if(fork1() == 0)
+            runcmd(parsecmd(selected_cmd));
+          wait(0);
+        }
+      } else {
+        printf("History entry %d not found\n", hist_num);
+      }
+      continue;
+    }
+    
+    // Add command to history (before processing)
+    add_to_history(cmd);
+    
     if(cmd[0] == 'c' && cmd[1] == 'd' && cmd[2] == ' '){
       // Chdir must be called by the parent, not the child.
       cmd[strlen(cmd)-1] = 0;  // chop \n
@@ -496,4 +626,142 @@ nulterminate(struct cmd *cmd)
     break;
   }
   return cmd;
+}
+
+// Add command to history (circular buffer)
+void
+add_to_history(char *cmd)
+{
+  // Skip empty commands and duplicate of last command
+  if (cmd[0] == '\n' || cmd[0] == 0) return;
+  if (history_count > 0 && strcmp(history[(history_start + history_count - 1) % MAX_HISTORY].command, cmd) == 0) {
+    return;
+  }
+  
+  int index = (history_start + history_count) % MAX_HISTORY;
+  strcpy(history[index].command, cmd);
+  history[index].length = strlen(cmd);
+  
+  if (history_count < MAX_HISTORY) {
+    history_count++;
+  } else {
+    history_start = (history_start + 1) % MAX_HISTORY;
+  }
+  
+  history_index = -1; // Reset history navigation
+}
+
+// Display command history
+void
+display_history(void)
+{
+  printf("\n=== Command History ===\n");
+  if (history_count == 0) {
+    printf("No commands in history.\n");
+    return;
+  }
+  
+  for (int i = 0; i < history_count; i++) {
+    int index = (history_start + i) % MAX_HISTORY;
+    
+    // Simple number display
+    printf("Command ");
+    if (i + 1 == 1) printf("1");
+    else if (i + 1 == 2) printf("2");
+    else if (i + 1 == 3) printf("3");
+    else if (i + 1 == 4) printf("4");
+    else if (i + 1 == 5) printf("5");
+    else if (i + 1 == 6) printf("6");
+    else if (i + 1 == 7) printf("7");
+    else if (i + 1 == 8) printf("8");
+    else if (i + 1 == 9) printf("9");
+    else printf("10+");
+    printf(": %s", history[index].command);
+  }
+  printf("\nUse !1, !2, !3, etc. to execute commands\n\n");
+}
+
+// Get history command for navigation (simplified - just return previous/next)
+char*
+get_history_command(int direction)
+{
+  if (history_count == 0) return 0;
+  
+  if (direction > 0) { // Up arrow - go to previous command
+    if (history_index == -1) {
+      history_index = history_count - 1;
+    } else if (history_index > 0) {
+      history_index--;
+    }
+  } else { // Down arrow - go to next command
+    if (history_index >= 0) {
+      history_index++;
+      if (history_index >= history_count) {
+        history_index = -1;
+        return 0; // No more history
+      }
+    }
+  }
+  
+  if (history_index >= 0) {
+    int index = (history_start + history_index) % MAX_HISTORY;
+    return history[index].command;
+  }
+  
+  return 0;
+}
+
+// Simple atoi implementation
+int
+atoi_simple(char *str)
+{
+  int result = 0;
+  int sign = 1;
+  
+  // Skip whitespace
+  while (*str == ' ' || *str == '\t' || *str == '\n') {
+    str++;
+  }
+  
+  // Handle sign
+  if (*str == '-') {
+    sign = -1;
+    str++;
+  } else if (*str == '+') {
+    str++;
+  }
+  
+  // Convert digits
+  while (*str >= '0' && *str <= '9') {
+    result = result * 10 + (*str - '0');
+    str++;
+  }
+  
+  return sign * result;
+}
+
+// Simple strncmp implementation
+int
+strncmp_simple(char *s1, char *s2, int n)
+{
+  for (int i = 0; i < n; i++) {
+    if (s1[i] != s2[i]) {
+      return s1[i] - s2[i];
+    }
+    if (s1[i] == '\0') {
+      return 0;
+    }
+  }
+  return 0;
+}
+
+// Simple getchar implementation
+int
+getchar_simple(void)
+{
+  char c;
+  if(read(0, &c, 1) == 1) {
+    return (unsigned char)c;
+  }
+  return -1;
 }
