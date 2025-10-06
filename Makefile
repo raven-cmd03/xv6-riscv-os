@@ -197,6 +197,10 @@ UPROGS=\
 	$U/_perftest\
 	$U/_memtest\
 	$U/_matrix_mult\
+	$U/_superpg_test\
+	$U/_superpg\
+	$U/_superpg_test2\
+	$U/_superpg_bench\
 
 
 
