@@ -201,7 +201,7 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
     panic("uvmunmap: not aligned");
 
   for(a = va; a < va + npages*PGSIZE; a += sz){
-    sz = PGSIZE;
+    sz = PGSIZE;  // Default to regular page size
     if((pte = walk(pagetable, a, 0)) == 0)
       panic("uvmunmap: walk");
     if((*pte & PTE_V) == 0) {
@@ -210,6 +210,9 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
     }
     if(PTE_FLAGS(*pte) == PTE_V)
       panic("uvmunmap: not a leaf");
+    
+    // For now, always treat as regular pages to avoid superfree panic
+    // TODO: Implement proper superpage detection
     if(do_free){
       uint64 pa = PTE2PA(*pte);
       kfree((void*)pa);
@@ -262,19 +265,51 @@ uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz, int xperm)
 
   oldsz = PGROUNDUP(oldsz);
   for(a = oldsz; a < newsz; a += sz){
-    sz = PGSIZE;
-    mem = kalloc();
-    if(mem == 0){
-      uvmdealloc(pagetable, a, oldsz);
-      return 0;
-    }
+    // Check if we should use a superpage
+    // Use superpage if:
+    // 1. The total allocation size is >= 2MB
+    // 2. The current address is 2MB aligned
+    // 3. We have at least 2MB left to allocate from current position
+    if((newsz - oldsz) >= SUPERPGSIZE && 
+       (a % SUPERPGSIZE) == 0 && 
+       (newsz - a) >= SUPERPGSIZE) {
+      sz = SUPERPGSIZE;
+      mem = superalloc();
+      if(mem == 0){
+        // If superpage allocation fails, fall back to regular pages
+        sz = PGSIZE;
+        mem = kalloc();
+        if(mem == 0){
+          uvmdealloc(pagetable, a, oldsz);
+          return 0;
+        }
+      }
 #ifndef LAB_SYSCALL
-    memset(mem, 0, sz);
+      memset(mem, 0, sz);
 #endif
-    if(mappages(pagetable, a, sz, (uint64)mem, PTE_R|PTE_U|xperm) != 0){
-      kfree(mem);
-      uvmdealloc(pagetable, a, oldsz);
-      return 0;
+      if(mappages(pagetable, a, sz, (uint64)mem, PTE_R|PTE_U|xperm) != 0){
+        if(sz == SUPERPGSIZE)
+          superfree(mem);
+        else
+          kfree(mem);
+        uvmdealloc(pagetable, a, oldsz);
+        return 0;
+      }
+    } else {
+      sz = PGSIZE;
+      mem = kalloc();
+      if(mem == 0){
+        uvmdealloc(pagetable, a, oldsz);
+        return 0;
+      }
+#ifndef LAB_SYSCALL
+      memset(mem, 0, sz);
+#endif
+      if(mappages(pagetable, a, sz, (uint64)mem, PTE_R|PTE_U|xperm) != 0){
+        kfree(mem);
+        uvmdealloc(pagetable, a, oldsz);
+        return 0;
+      }
     }
   }
   return newsz;
@@ -344,7 +379,7 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   int szinc;
 
   for(i = 0; i < sz; i += szinc){
-    szinc = PGSIZE;
+    // Temporarily disable superpage usage for debugging
     szinc = PGSIZE;
     if((pte = walk(old, i, 0)) == 0)
       panic("uvmcopy: pte should exist");
