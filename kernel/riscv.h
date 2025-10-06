@@ -267,6 +267,12 @@ w_mcounteren(uint64 x)
   asm volatile("csrw mcounteren, %0" : : "r" (x));
 }
 
+static inline void 
+w_scounteren(uint64 x)
+{
+  asm volatile("csrw scounteren, %0" : : "r" (x));
+}
+
 static inline uint64
 r_mcounteren()
 {
@@ -281,6 +287,24 @@ r_time()
 {
   uint64 x;
   asm volatile("csrr %0, time" : "=r" (x) );
+  return x;
+}
+
+// machine-mode cycle counter (rdcycle)
+static inline uint64
+r_cycle()
+{
+  uint64 x;
+  asm volatile("csrr %0, cycle" : "=r" (x) );
+  return x;
+}
+
+// machine-mode instruction retired counter (rdinstret)
+static inline uint64
+r_instret()
+{
+  uint64 x;
+  asm volatile("csrr %0, instret" : "=r" (x) );
   return x;
 }
 

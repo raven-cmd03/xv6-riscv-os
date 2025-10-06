@@ -42,3 +42,6 @@ entry("send");
 entry("recv");
 entry("pgpte");
 entry("kpgtbl");
+entry("rdcycle");
+entry("rdtime");
+entry("rdinstret");

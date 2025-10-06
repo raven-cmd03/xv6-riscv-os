@@ -123,3 +123,25 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+
+uint64
+sys_rdcycle(void)
+{
+  // Since cycle counter might not be available in this QEMU emulation,
+  // return time counter as a reasonable approximation
+  return r_time();
+}
+
+uint64
+sys_rdtime(void)
+{
+  return r_time();
+}
+
+uint64
+sys_rdinstret(void)
+{
+  // Since instret counter might not be available in this QEMU emulation,
+  // return time counter as a reasonable approximation
+  return r_time();
+}

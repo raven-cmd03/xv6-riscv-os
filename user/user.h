@@ -37,6 +37,9 @@ int ugetpid(void);
 uint64 pgpte(void*);
 void kpgtbl(void);
 #endif
+uint64 rdcycle(void);
+uint64 rdtime(void);
+uint64 rdinstret(void);
 
 // ulib.c
 int stat(const char*, struct stat*);
